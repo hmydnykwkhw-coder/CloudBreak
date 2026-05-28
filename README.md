@@ -7,7 +7,7 @@
 <br/><br/>
 
 <a href="../../actions/workflows/deploy-vless.yml">
-  <img src="https://img.shields.io/github/actions/workflow/status/RANGER-exe/CloudBreak/deploy-vless.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=DEPLOY&color=00ffcc&labelColor=0a0a2e" alt="Deploy Status"/>
+  <img src="https://img.shields.io/badge/⚡_Deploy_CloudBreak_Worker-00ffcc?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=0a0a2e" alt="Deploy Workflow"/>
 </a>
 <img src="https://img.shields.io/badge/Cloudflare-Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white&labelColor=0a0a2e" alt="Cloudflare"/>
 <img src="https://img.shields.io/badge/Cost-FREE%20FOREVER-00ff88?style=for-the-badge&logo=cashapp&logoColor=white&labelColor=0a0a2e" alt="Free"/>
