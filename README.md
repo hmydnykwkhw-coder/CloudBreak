@@ -37,11 +37,12 @@
 </div>
 
 ---
-<div align="center">
 
-<img src="assets/banner-ascii.svg" width="100%" alt="CloudBreak ASCII Banner"/>
-
-</div>
+<p align="center">
+  <a href="#">
+    <img src="assets/banner-ascii.svg" width="100%" />
+  </a>
+</p>
 
 ---
 
@@ -69,11 +70,11 @@
 
 ## 🌐 Traffic Flow
 
-<div align="center">
-
-<img src="assets/traffic-flow.svg" width="100%" alt="CloudBreak Traffic Flow Diagram"/>
-
-</div>
+<p align="center">
+  <a href="#">
+    <img src="assets/traffic-flow.svg" width="100%" />
+  </a>
+</p>
 
 ---
 
