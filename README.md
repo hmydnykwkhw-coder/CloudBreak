@@ -7,7 +7,7 @@
 <br/><br/>
 
 <a href="../../actions/workflows/deploy-vless.yml">
-  <img src="https://img.shields.io/github/actions/workflow/status/AMIR11REZA/CloudBreak/deploy-vless.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=DEPLOY&color=00ffcc&labelColor=0a0a2e" alt="Deploy Status"/>
+  <img src="https://img.shields.io/github/actions/workflow/status/RANGER-exe/CloudBreak/deploy-vless.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=DEPLOY&color=00ffcc&labelColor=0a0a2e" alt="Deploy Status"/>
 </a>
 <img src="https://img.shields.io/badge/Cloudflare-Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white&labelColor=0a0a2e" alt="Cloudflare"/>
 <img src="https://img.shields.io/badge/Cost-FREE%20FOREVER-00ff88?style=for-the-badge&logo=cashapp&logoColor=white&labelColor=0a0a2e" alt="Free"/>
@@ -24,15 +24,15 @@
 <br/>
 
 <a href="../../stargazers">
-  <img src="https://img.shields.io/github/stars/AMIR11REZA/CloudBreak?style=for-the-badge&logo=starship&logoColor=white&color=ffd700&labelColor=0a0a2e" alt="Stars"/>
+  <img src="https://img.shields.io/github/stars/RANGER-exe/CloudBreak?style=for-the-badge&logo=starship&logoColor=white&color=ffd700&labelColor=0a0a2e" alt="Stars"/>
 </a>
 <a href="../../forks">
-  <img src="https://img.shields.io/github/forks/AMIR11REZA/CloudBreak?style=for-the-badge&logo=githubactions&logoColor=white&color=00cfff&labelColor=0a0a2e" alt="Forks"/>
+  <img src="https://img.shields.io/github/forks/RANGER-exe/CloudBreak?style=for-the-badge&logo=githubactions&logoColor=white&color=00cfff&labelColor=0a0a2e" alt="Forks"/>
 </a>
 <a href="../../issues">
-  <img src="https://img.shields.io/github/issues/AMIR11REZA/CloudBreak?style=for-the-badge&logo=github&logoColor=white&color=ff6b35&labelColor=0a0a2e" alt="Issues"/>
+  <img src="https://img.shields.io/github/issues/RANGER-exe/CloudBreak?style=for-the-badge&logo=github&logoColor=white&color=ff6b35&labelColor=0a0a2e" alt="Issues"/>
 </a>
-<img src="https://img.shields.io/badge/Made%20by-AMIR11REZA-00ffcc?style=for-the-badge&logo=github&logoColor=white&labelColor=0a0a2e" alt="Made by"/>
+<img src="https://img.shields.io/badge/Made%20by-RΛИGΞЯ 11-00ffcc?style=for-the-badge&logo=github&logoColor=white&labelColor=0a0a2e" alt="Made by"/>
 
 </div>
 
@@ -48,9 +48,9 @@
 
 <div align="center">
 
-[![English](https://img.shields.io/badge/🇺🇸-English-00ffcc?style=flat-square&labelColor=0a0a2e)](#-english-documentation "English")
+[![English](https://img.shields.io/badge/🇺🇸-English-C21E56?style=flat-square&labelColor=0096FF)](#-english-documentation "English")
 &nbsp;&nbsp;
-[![فارسی](https://img.shields.io/badge/🇮🇷-فارسی-a855f7?style=flat-square&labelColor=0a0a2e)](#-مستندات-فارسی "Persian")
+[![فارسی](https://img.shields.io/badge/🇮🇷-فارسی-C21E56?style=flat-square&labelColor=00ffcc)](#-مستندات-فارسی "Persian")
 
 </div>
 
@@ -423,15 +423,15 @@ UUID فقط به عنوان env var در کلاودفلر ذخیره میشه �
 
 <br/>
 
-[![Stars](https://img.shields.io/github/stars/AMIR11REZA/CloudBreak?style=social)](../../stargazers)
+[![Stars](https://img.shields.io/github/stars/RANGER-exe/CloudBreak?style=social)](../../stargazers)
 &nbsp;
-[![Forks](https://img.shields.io/github/forks/AMIR11REZA/CloudBreak?style=social)](../../forks)
+[![Forks](https://img.shields.io/github/forks/RANGER-exe/CloudBreak?style=social)](../../forks)
 &nbsp;
-[![Follow](https://img.shields.io/github/followers/AMIR11REZA?style=social)](https://github.com/AMIR11REZA)
+[![Follow](https://img.shields.io/github/followers/RANGER-exe?style=social)](https://github.com/RANGER-exe)
 
 <br/>
 
-*Built with ❤️ by [AMIR11REZA](https://github.com/AMIR11REZA) — for everyone behind a wall.*
+*Built with ❤️ by [RANGER-exe](https://github.com/RANGER-exe) — for everyone behind a wall.*
 
 <br/>
 
