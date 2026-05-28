@@ -22,17 +22,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
+      # -----------------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------------
       - name: "📦 Checkout repository"
         uses: actions/checkout@v4
 
-
+      # -----------------------------------------------------------------------
+      # 2. Install tools
+      # -----------------------------------------------------------------------
       - name: "🔧 Install Wrangler + Python deps"
         run: |
-          npm install -g wrangler 2>/dev/null || true
+          npm install -g wrangler
           pip install "qrcode[pil]" --quiet 2>/dev/null || true
           echo "Wrangler version: $(wrangler --version)"
 
+      # -----------------------------------------------------------------------
+      # 3. Delete existing worker (ensures fresh keys every run)
+      # -----------------------------------------------------------------------
       - name: "🗑️  Delete existing worker (if any)"
         continue-on-error: true
         env:
@@ -42,6 +49,9 @@ jobs:
           wrangler delete --name "${{ github.event.inputs.worker_name }}" --force \
             2>/dev/null || echo "Worker did not exist yet — continuing"
 
+      # -----------------------------------------------------------------------
+      # 4. Generate cryptographic keys
+      # -----------------------------------------------------------------------
       - name: "🔑 Generate UUID, WS path, timestamp"
         id: keygen
         run: |
@@ -62,6 +72,9 @@ jobs:
           echo "✅ WS Path:   ${WS_PATH}"
           echo "✅ Timestamp: ${DEPLOY_TIME}"
 
+      # -----------------------------------------------------------------------
+      # 5. Deploy to Cloudflare Workers
+      # -----------------------------------------------------------------------
       - name: "🚀 Deploy Worker to Cloudflare"
         id: deploy
         env:
@@ -113,6 +126,9 @@ jobs:
 
           echo "✅ Deployed to: ${WORKER_URL}"
 
+      # -----------------------------------------------------------------------
+      # 6. Verify worker is live
+      # -----------------------------------------------------------------------
       - name: "🩺 Health check"
         run: |
           WORKER_URL="${{ steps.deploy.outputs.worker_url }}"
@@ -131,7 +147,9 @@ jobs:
           echo "⚠️  Health check did not return 200 after 5 attempts."
           echo "   The worker may still be propagating. Try the /health URL manually."
 
-
+      # -----------------------------------------------------------------------
+      # 7. Generate configs, QR codes, and workflow summary
+      # -----------------------------------------------------------------------
       - name: "📋 Generate links, QR codes, and summary"
         id: summary
         run: |
@@ -363,6 +381,9 @@ jobs:
 
           SUMMARY_EOF
 
+      # -----------------------------------------------------------------------
+      # 8. Upload config artifact
+      # -----------------------------------------------------------------------
       - name: "📎 Upload config artifact"
         uses: actions/upload-artifact@v4
         with:
