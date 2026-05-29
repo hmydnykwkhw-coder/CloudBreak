@@ -100,15 +100,18 @@ jobs:
             || { echo "::error title=Keygen Failed::UUID invalid: ${UUID}"; exit 1; }
 
           WS_PATH="/$(openssl rand -hex 6)"
+          SUB_PATH="/$(openssl rand -hex 8)"
           DEPLOY_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
           echo "✅ UUID:    ${UUID}"
           echo "✅ WS Path: ${WS_PATH}"
+          echo "✅ SUB Path: ${SUB_PATH}"
           echo "✅ Time:    ${DEPLOY_TIME}"
 
           {
             echo "uuid=${UUID}"
             echo "ws_path=${WS_PATH}"
+            echo "sub_path=${SUB_PATH}"
             echo "deploy_time=${DEPLOY_TIME}"
           } >> "$GITHUB_OUTPUT"
 
@@ -124,6 +127,7 @@ jobs:
           WORKER_NAME="${{ github.event.inputs.worker_name }}"
           UUID="${{ steps.keygen.outputs.uuid }}"
           WS_PATH="${{ steps.keygen.outputs.ws_path }}"
+          SUB_PATH="${{ steps.keygen.outputs.sub_path }}"
           DEPLOY_TIME="${{ steps.keygen.outputs.deploy_time }}"
           PROXY_IP="${{ github.event.inputs.proxy_ip }}"
 
@@ -151,21 +155,21 @@ jobs:
 
           # ── Write wrangler.toml with printf (no heredoc indent bug) ──────
           echo "── Writing wrangler.toml ─────────────────────────────────"
-          printf 'name = "%s"\n'                              "${WORKER_NAME}"  > wrangler.toml
+          printf 'name = "%s"\n'                              "${WORKER_NAME}" >> wrangler.toml
           printf 'main = "worker.js"\n'                                        >> wrangler.toml
           printf 'compatibility_date = "2025-01-01"\n'                         >> wrangler.toml
           printf 'workers_dev = true\n'                                        >> wrangler.toml
           printf 'compatibility_flags = ["nodejs_compat"]\n'                   >> wrangler.toml
-          printf '\n[vars]\n'                                                   >> wrangler.toml
+          printf '\n[vars]\n'                                                  >> wrangler.toml
           printf 'UUID = "%s"\n'                              "${UUID}"        >> wrangler.toml
+          printf 'SUB_PATH = "%s"\n'                          "${SUB_PATH}"    >> wrangler.toml
           printf 'WS_PATH = "%s"\n'                           "${WS_PATH}"     >> wrangler.toml
           printf 'DEPLOY_TIME = "%s"\n'                       "${DEPLOY_TIME}" >> wrangler.toml
-          [ -n "${PROXY_IP}" ] && printf 'PROXYIP = "%s"\n'  "${PROXY_IP}"    >> wrangler.toml
+          [ -n "${PROXY_IP}" ] && printf 'PROXYIP = "%s"\n'   "${PROXY_IP}"    >> wrangler.toml
 
           echo "── wrangler.toml ─────────────────────────────────────────"
           cat wrangler.toml
           echo ""
-
           # ── Pre-deploy sanity check ───────────────────────────────────────
           echo "── Pre-deploy file check ─────────────────────────────────"
           ls -la worker.js wrangler.toml
@@ -259,12 +263,13 @@ jobs:
 
           UUID="${{ steps.keygen.outputs.uuid }}"
           WS_PATH="${{ steps.keygen.outputs.ws_path }}"
+          SUB_PATH="${{ steps.keygen.outputs.sub_path }}"
           DEPLOY_TIME="${{ steps.keygen.outputs.deploy_time }}"
           WORKER_URL="${{ steps.deploy.outputs.worker_url }}"
           HOST="${{ steps.deploy.outputs.host }}"
           HEALTH_OK="${{ steps.deploy.outputs.health_ok }}"
           PROXY_IP="${{ github.event.inputs.proxy_ip }}"
-          SUB_URL="${WORKER_URL}/sub"
+          SUB_URL="${WORKER_URL}/${SUB_PATH}"
 
           mkdir -p /tmp/cb
 
@@ -515,7 +520,7 @@ jobs:
           printf '> 💡 Click the **copy icon** on any code block\n\n' >> "$GITHUB_STEP_SUMMARY"
           printf '### ⚡ VLESS\n```\n%s\n```\n\n' "${VLESS_LINK}" >> "$GITHUB_STEP_SUMMARY"
           printf '### 🔮 VMess\n```\n%s\n```\n\n' "${VMESS_LINK}" >> "$GITHUB_STEP_SUMMARY"
-          printf '### 📡 Subscription URL\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '### 📡 Subscription URL\n```\n%s\n```\n\n' "${SUB_PATH}" >> "$GITHUB_STEP_SUMMARY"
           printf '> Import once — auto-updates every redeploy.\n\n' >> "$GITHUB_STEP_SUMMARY"
           printf '```\n%s\n```\n\n---\n\n' "${SUB_URL}" >> "$GITHUB_STEP_SUMMARY"
 
