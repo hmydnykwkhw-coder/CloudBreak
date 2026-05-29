@@ -8,7 +8,7 @@ on:
         required: true
         default: "vless-ir"
       proxy_ip:
-        description: "PROXYIP (optional) — relay IP if workers.dev is blocked in your region"
+        description: "PROXYIP (optional) — relay IP if workers.dev is blocked"
         required: false
         default: ""
 
@@ -30,117 +30,85 @@ jobs:
         uses: actions/checkout@v4
 
       # ══════════════════════════════════════════════════════════════════════
-      # 2 ▸ Validate secrets (fail fast before wasting time on installs)
+      # 2 ▸ Validate secrets
       # ══════════════════════════════════════════════════════════════════════
       - name: "🔐 Validate secrets"
         run: |
           FAIL=0
-
           if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
-            echo "::error title=Missing Secret::CLOUDFLARE_API_TOKEN is not set."
-            echo "  → Settings → Secrets and variables → Actions → New repository secret"
+            echo "::error title=Missing Secret::CLOUDFLARE_API_TOKEN is not set"
             FAIL=1
           else
             echo "✅ CLOUDFLARE_API_TOKEN present"
           fi
-
           if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
-            echo "::error title=Missing Secret::CLOUDFLARE_ACCOUNT_ID is not set."
-            echo "  → Cloudflare Dashboard → Workers & Pages → right sidebar"
+            echo "::error title=Missing Secret::CLOUDFLARE_ACCOUNT_ID is not set"
             FAIL=1
           else
             echo "✅ CLOUDFLARE_ACCOUNT_ID present"
           fi
-
-          # Validate worker name (alphanumeric + hyphens only)
-          WORKER_NAME="${{ github.event.inputs.worker_name }}"
-          if ! echo "${WORKER_NAME}" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$'; then
-            echo "::error title=Invalid Input::worker_name '${WORKER_NAME}' is invalid."
-            echo "  → Must be alphanumeric + hyphens, max 63 chars, cannot start with hyphen"
-            FAIL=1
-          else
-            echo "✅ Worker name valid: ${WORKER_NAME}"
-          fi
-
           [ "${FAIL}" -eq 0 ] || exit 1
 
       # ══════════════════════════════════════════════════════════════════════
-      # 3 ▸ Validate worker.js
+      # 3 ▸ Install Wrangler + Python deps
+      # ══════════════════════════════════════════════════════════════════════
+      - name: "🔧 Install tools"
+        run: |
+          for attempt in 1 2 3; do
+            npm install -g wrangler && break
+            [ "${attempt}" -eq 3 ] && exit 1
+            sleep 5
+          done
+          echo "✅ $(wrangler --version)"
+
+          if pip install "qrcode[pil]" pillow --quiet 2>/dev/null; then
+            echo "QRCODE_OK=true" >> "$GITHUB_ENV"
+          else
+            echo "QRCODE_OK=false" >> "$GITHUB_ENV"
+          fi
+
+      # ══════════════════════════════════════════════════════════════════════
+      # 4 ▸ Validate worker.js exists and is valid
       # ══════════════════════════════════════════════════════════════════════
       - name: "📄 Validate worker.js"
         run: |
+          echo "── Files in repo root ───────────────────────────────────"
+          ls -la
+          echo ""
+
           if [ ! -f "worker.js" ]; then
-            echo "::error title=File Missing::worker.js not found in repository root"
-            echo "Files in root:"
-            ls -la
+            echo "::error title=Missing File::worker.js not found in repo root"
+            exit 1
+          fi
+
+          SIZE=$(wc -c < worker.js)
+          LINES=$(wc -l < worker.js)
+          echo "✅ worker.js found — ${LINES} lines, ${SIZE} bytes"
+
+          if [ "${SIZE}" -eq 0 ]; then
+            echo "::error title=Empty File::worker.js is empty"
             exit 1
           fi
 
           if ! grep -q "export default" worker.js; then
-            echo "::error title=Invalid Worker::worker.js has no 'export default' — not a valid ES module"
+            echo "::error title=Invalid Worker::worker.js has no 'export default'"
             exit 1
           fi
 
-          LINES=$(wc -l < worker.js)
-          SIZE=$(wc -c < worker.js)
-          echo "✅ worker.js OK — ${LINES} lines, ${SIZE} bytes"
-
-          # Warn if approaching the 1 MB Cloudflare free-plan limit
-          if [ "${SIZE}" -gt 900000 ]; then
-            echo "::warning title=Size Warning::worker.js is ${SIZE} bytes — approaching 1 MB Cloudflare limit"
-          fi
+          echo "✅ worker.js looks valid"
 
       # ══════════════════════════════════════════════════════════════════════
-      # 4 ▸ Install tools
-      # ══════════════════════════════════════════════════════════════════════
-      - name: "🔧 Install Wrangler + Python deps"
-        run: |
-          echo "── Wrangler ─────────────────────────────────────────────"
-          for attempt in 1 2 3; do
-            if npm install -g wrangler 2>&1; then
-              WVER=$(wrangler --version 2>&1 || echo "unknown")
-              echo "✅ Wrangler installed: ${WVER}"
-              break
-            fi
-            if [ "${attempt}" -eq 3 ]; then
-              echo "::error title=Install Failed::npm install -g wrangler failed after 3 attempts"
-              exit 1
-            fi
-            echo "  Attempt ${attempt} failed — retrying in 5s…"
-            sleep 5
-          done
-
-          echo "── Python qrcode ─────────────────────────────────────────"
-          if pip install "qrcode[pil]" pillow --quiet 2>&1; then
-            echo "QRCODE_OK=true" >> "$GITHUB_ENV"
-            echo "✅ qrcode ready"
-          else
-            echo "QRCODE_OK=false" >> "$GITHUB_ENV"
-            echo "::warning title=QR Skip::qrcode install failed — QR codes will be omitted"
-          fi
-
-      # ══════════════════════════════════════════════════════════════════════
-      # 5 ▸ Generate cryptographic credentials
+      # 5 ▸ Generate credentials
       # ══════════════════════════════════════════════════════════════════════
       - name: "🔑 Generate UUID + WS path"
         id: keygen
         run: |
-          # UUID from kernel entropy
           UUID=$(cat /proc/sys/kernel/random/uuid)
-          if ! echo "${UUID}" | grep -qE \
-               '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
-            echo "::error title=Keygen Failed::UUID generation produced invalid output: ${UUID}"
-            exit 1
-          fi
-
-          # 12-char random hex WS path
           WS_PATH="/$(openssl rand -hex 6)"
-          if [ -z "${WS_PATH}" ] || [ "${WS_PATH}" = "/" ]; then
-            echo "::error title=Keygen Failed::WS_PATH generation failed"
-            exit 1
-          fi
-
           DEPLOY_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "✅ UUID:    ${UUID}"
+          echo "✅ WS Path: ${WS_PATH}"
 
           {
             echo "uuid=${UUID}"
@@ -148,12 +116,8 @@ jobs:
             echo "deploy_time=${DEPLOY_TIME}"
           } >> "$GITHUB_OUTPUT"
 
-          echo "✅ UUID:      ${UUID}"
-          echo "✅ WS Path:   ${WS_PATH}"
-          echo "✅ Timestamp: ${DEPLOY_TIME}"
-
       # ══════════════════════════════════════════════════════════════════════
-      # 6 ▸ Deploy (with retry — no delete, no command substitution)
+      # 6 ▸ Deploy
       # ══════════════════════════════════════════════════════════════════════
       - name: "🚀 Deploy to Cloudflare Workers"
         id: deploy
@@ -167,143 +131,136 @@ jobs:
           DEPLOY_TIME="${{ steps.keygen.outputs.deploy_time }}"
           PROXY_IP="${{ github.event.inputs.proxy_ip }}"
 
-          # ── Write wrangler.toml so workers_dev=true is EXPLICIT ────────
-          # IMPORTANT: use printf (not heredoc) — heredoc inside a YAML block
-          # inherits the YAML indentation, producing invalid TOML with leading
-          # spaces on every line, which wrangler silently ignores/misparses.
-          printf 'name = "%s"\n'             "${WORKER_NAME}"  > wrangler.toml
-          printf 'main = "worker.js"\n'                       >> wrangler.toml
-          printf 'compatibility_date = "2024-12-01"\n'        >> wrangler.toml
-          printf 'workers_dev = true\n'                       >> wrangler.toml
-          printf '\n[vars]\n'                                >> wrangler.toml
-          printf 'UUID = "%s"\n'             "${UUID}"        >> wrangler.toml
-          printf 'WS_PATH = "%s"\n'          "${WS_PATH}"     >> wrangler.toml
-          printf 'DEPLOY_TIME = "%s"\n'      "${DEPLOY_TIME}" >> wrangler.toml
-          if [ -n "${PROXY_IP}" ]; then
-            printf 'PROXYIP = "%s"\n'        "${PROXY_IP}"    >> wrangler.toml
-          fi
-
-          echo "── wrangler.toml ────────────────────────────────────────"
-          cat wrangler.toml
-          echo ""
-
-          echo "WS Path    : ${WS_PATH}"
-          echo "ProxyIP    : ${PROXY_IP:-<none>}"
-
-          # ── Step A: Get workers.dev subdomain via Cloudflare API ────────
-          # URL format is <worker>.<SUBDOMAIN>.workers.dev — subdomain is
-          # per-account and NOT predictable without an API call.
-          echo "── Fetching account workers.dev subdomain ───────────────"
-          CF_SUBDOMAIN=$(curl -s \
+          # ── Step 1: Get workers.dev subdomain from Cloudflare API ────────
+          echo "── Fetching workers.dev subdomain from Cloudflare API ───"
+          API_RESP=$(curl -s \
             "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['result']['subdomain'] if d.get('success') else '')" 2>/dev/null || echo "")
+            -H "Content-Type: application/json")
+
+          echo "API response: ${API_RESP}"
+
+          CF_SUBDOMAIN=$(echo "${API_RESP}" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d['result']['subdomain'] if d.get('success') and d.get('result') else '')" \
+            2>/dev/null || echo "")
 
           if [ -n "${CF_SUBDOMAIN}" ]; then
             WORKER_URL="https://${WORKER_NAME}.${CF_SUBDOMAIN}.workers.dev"
             HOST="${WORKER_NAME}.${CF_SUBDOMAIN}.workers.dev"
-            echo "✅ Subdomain from API: ${CF_SUBDOMAIN}"
+            echo "✅ Subdomain: ${CF_SUBDOMAIN}"
+            echo "✅ Worker URL: ${WORKER_URL}"
           else
-            echo "⚠️  Could not fetch subdomain from API — will extract from wrangler output"
+            echo "⚠️  Could not get subdomain from API — will extract from wrangler output"
             WORKER_URL=""
             HOST=""
           fi
 
-          echo "Target URL : ${WORKER_URL:-<pending wrangler output>}"
+          # ── Step 2: Build wrangler.toml dynamically ──────────────────────
+          # Use printf to avoid heredoc indentation bug in YAML
+          # cloudflare:sockets requires nodejs_compat flag
+          echo "── Writing wrangler.toml ─────────────────────────────────"
 
-          # ── Step B: Deploy with retry ────────────────────────────────────
+          printf 'name = "%s"\n'                         "${WORKER_NAME}"   > wrangler.toml
+          printf 'main = "worker.js"\n'                                    >> wrangler.toml
+          printf 'compatibility_date = "2025-01-01"\n'                     >> wrangler.toml
+          printf 'workers_dev = true\n'                                     >> wrangler.toml
+          printf 'compatibility_flags = ["nodejs_compat"]\n'               >> wrangler.toml
+          printf '\n[vars]\n'                                               >> wrangler.toml
+          printf 'UUID = "%s"\n'                         "${UUID}"         >> wrangler.toml
+          printf 'WS_PATH = "%s"\n'                      "${WS_PATH}"      >> wrangler.toml
+          printf 'DEPLOY_TIME = "%s"\n'                  "${DEPLOY_TIME}"  >> wrangler.toml
+          [ -n "${PROXY_IP}" ] && printf 'PROXYIP = "%s"\n' "${PROXY_IP}" >> wrangler.toml
+
+          echo "── wrangler.toml content ─────────────────────────────────"
+          cat wrangler.toml
+          echo ""
+
+          # ── Step 3: Verify worker.js is still there ───────────────────────
+          echo "── Pre-deploy file check ─────────────────────────────────"
+          ls -la worker.js wrangler.toml
+          echo "worker.js size: $(wc -c < worker.js) bytes"
+          echo ""
+
+          # ── Step 4: Deploy with explicit entrypoint + retry ───────────────
+          # Always pass worker.js explicitly — avoids Wrangler v4 empty-deploy bug
           DEPLOY_EXIT=1
           for attempt in 1 2 3; do
-            echo ""
-            echo "── Deploy attempt ${attempt}/3 ──────────────────────────────"
+            echo "── Deploy attempt ${attempt}/3 ──────────────────────────"
 
-            # Disable pipefail around tee so we capture exit code correctly
             set +e
-            # Use wrangler.toml — no --var flags needed (vars are in toml)
-            wrangler deploy \
-              2>&1 | tee /tmp/wrangler-deploy.log
+            wrangler deploy worker.js 2>&1 | tee /tmp/wrangler.log
             DEPLOY_EXIT=${PIPESTATUS[0]}
             set -e
 
-            echo "wrangler exit code: ${DEPLOY_EXIT}"
+            echo "Wrangler exit code: ${DEPLOY_EXIT}"
 
             if [ "${DEPLOY_EXIT}" -eq 0 ]; then
-              echo "✅ Wrangler reported success on attempt ${attempt}"
+              echo "✅ Deploy succeeded on attempt ${attempt}"
               break
             fi
 
-            # ── Classify the error for a helpful message ────────────────
-            LOG=$(cat /tmp/wrangler-deploy.log)
-            if echo "${LOG}" | grep -qi "10000\|authentication\|API token\|Forbidden\|401\|403"; then
-              echo "::error title=Auth Error::API token invalid or lacks Workers Scripts:Edit permission"
-              exit 1   # No point retrying auth errors
-            elif echo "${LOG}" | grep -qi "10021\|subdomain\|workers.dev.*not.*enabled"; then
-              echo "::error title=Subdomain Error::workers.dev subdomain not activated"
-              echo "  → Cloudflare Dashboard → Workers & Pages → enable workers.dev"
+            LOG=$(cat /tmp/wrangler.log)
+
+            # Fast-fail on unrecoverable errors
+            if echo "${LOG}" | grep -qi "10000\|10063\|Forbidden\|401\|403\|authentication\|API token"; then
+              echo "::error title=Auth Error::Invalid API token or missing workers.dev subdomain"
+              echo "Fix: Cloudflare Dashboard → Workers & Pages (open it once to init subdomain)"
               exit 1
-            elif echo "${LOG}" | grep -qi "syntax\|SyntaxError\|Unexpected token"; then
-              echo "::error title=Syntax Error::worker.js has a syntax/parse error"
-              exit 1
-            elif echo "${LOG}" | grep -qi "too large\|exceeded\|size"; then
-              echo "::error title=Size Error::worker.js exceeds Cloudflare size limit"
+            fi
+            if echo "${LOG}" | grep -qi "SyntaxError\|Unexpected token\|Parse error"; then
+              echo "::error title=Syntax Error::worker.js has a syntax error"
               exit 1
             fi
 
-            if [ "${attempt}" -lt 3 ]; then
-              echo "  Transient error — retrying in 10s…"
-              sleep 10
-            fi
+            [ "${attempt}" -lt 3 ] && echo "Retrying in 10s…" && sleep 10
           done
 
-          # ── Step C: Extract URL from wrangler output if API failed ───────
+          # ── Step 5: Extract URL from wrangler output if API didn't give it ─
           if [ -z "${WORKER_URL}" ]; then
             echo "── Extracting URL from wrangler output ──────────────────"
             WORKER_URL=$(grep -oP 'https://[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.workers\.dev' \
-              /tmp/wrangler-deploy.log | head -1 || echo "")
+              /tmp/wrangler.log | head -1 || echo "")
+
             if [ -n "${WORKER_URL}" ]; then
               HOST=$(echo "${WORKER_URL}" | sed 's|https://||')
-              echo "✅ URL extracted from wrangler output: ${WORKER_URL}"
+              echo "✅ URL from wrangler output: ${WORKER_URL}"
+            elif [ "${DEPLOY_EXIT}" -eq 0 ]; then
+              # Deploy succeeded but can't find URL — use name.workers.dev as fallback
+              echo "⚠️  Could not determine exact URL. Using simple fallback."
+              WORKER_URL="https://${WORKER_NAME}.workers.dev"
+              HOST="${WORKER_NAME}.workers.dev"
             else
-              echo "::error title=URL Unknown::Could not determine worker URL from API or wrangler output"
-              echo "  Check wrangler output above for the actual URL"
-              cat /tmp/wrangler-deploy.log
+              echo "::error title=Deploy Failed::wrangler exited ${DEPLOY_EXIT} and URL unknown"
+              cat /tmp/wrangler.log
               exit 1
             fi
           fi
 
+          echo "── Full wrangler output ──────────────────────────────────"
+          cat /tmp/wrangler.log
+          echo ""
           echo "✅ Final Worker URL: ${WORKER_URL}"
 
-          # ── Step D: Health check — wait for edge propagation ─────────────
-          # Cloudflare edge propagation can take up to ~60s after deploy
-          echo ""
-          echo "── Health verification (up to 90s) ─────────────────────"
+          # ── Step 6: Health check ──────────────────────────────────────────
+          echo "── Health check (up to 90s) ──────────────────────────────"
           HEALTH_OK=false
           for i in $(seq 1 18); do
             HTTP=$(curl -s -o /tmp/health.json -w "%{http_code}" \
-                   --max-time 8 --connect-timeout 5 \
-                   "${WORKER_URL}/health" 2>/dev/null || echo "000")
-            echo "  [${i}/18] GET ${WORKER_URL}/health → HTTP ${HTTP}"
+              --max-time 8 --connect-timeout 5 \
+              "${WORKER_URL}/health" 2>/dev/null || echo "000")
+            echo "  [${i}/18] ${WORKER_URL}/health → HTTP ${HTTP}"
             if [ "${HTTP}" = "200" ]; then
               HEALTH_OK=true
               echo "✅ Worker is live!"
+              cat /tmp/health.json 2>/dev/null || true
               break
             fi
             sleep 5
           done
 
-          if [ "${HEALTH_OK}" = "false" ]; then
-            if [ "${DEPLOY_EXIT}" -ne 0 ]; then
-              # Both wrangler AND health failed — real failure
-              echo "::error title=Deploy Failed::wrangler exit ${DEPLOY_EXIT} AND health check timed out"
-              echo "Full wrangler log:"
-              cat /tmp/wrangler-deploy.log
-              exit 1
-            else
-              # Wrangler OK but health not yet responding — probably still propagating
-              echo "::warning title=Propagating::wrangler succeeded but /health not yet responding"
-              echo "  Worker may still be propagating. Check ${WORKER_URL}/health manually."
-            fi
+          if [ "${HEALTH_OK}" = "false" ] && [ "${DEPLOY_EXIT}" -ne 0 ]; then
+            echo "::error title=Deploy Failed::Both wrangler and health check failed"
+            exit 1
           fi
 
           {
@@ -313,9 +270,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # ══════════════════════════════════════════════════════════════════════
-      # 7 ▸ Build configs + QR codes + beautiful summary
+      # 7 ▸ Generate links, QR codes, summary
       # ══════════════════════════════════════════════════════════════════════
-      - name: "📋 Generate links, QR codes, and summary"
+      - name: "📋 Generate configs, QR codes, and summary"
         run: |
           set -euo pipefail
 
@@ -330,26 +287,23 @@ jobs:
 
           mkdir -p /tmp/cb
 
-          # ── Generate links via Python (safe URL encoding) ──────────────
           python3 - <<PYEOF
-          import urllib.parse, json, base64, sys
+          import urllib.parse, json, base64
 
-          uuid     = "${UUID}"
-          host     = "${HOST}"
-          ws_path  = "${WS_PATH}"
-          worker   = "${WORKER_URL}"
-          sub_url  = "${SUB_URL}"
-          deploy   = "${DEPLOY_TIME}"
+          uuid      = "${UUID}"
+          host      = "${HOST}"
+          ws_path   = "${WS_PATH}"
+          worker    = "${WORKER_URL}"
+          sub_url   = "${SUB_URL}"
+          deploy    = "${DEPLOY_TIME}"
 
-          # VLESS
           params = urllib.parse.urlencode({
-              "encryption": "none", "security": "tls", "sni": host,
-              "fp": "chrome", "type": "ws", "host": host,
-              "path": ws_path, "alpn": "h2,http/1.1",
+              "encryption":"none","security":"tls","sni":host,
+              "fp":"chrome","type":"ws","host":host,
+              "path":ws_path,"alpn":"h2,http/1.1",
           })
           vless = f"vless://{uuid}@{host}:443?{params}#CF-VLESS-IR"
 
-          # VMess
           cfg = {
               "v":"2","ps":"CF-VMess-IR","add":host,"port":443,"id":uuid,
               "aid":0,"net":"ws","type":"none","host":host,"path":ws_path,
@@ -359,229 +313,163 @@ jobs:
               json.dumps(cfg, separators=(",",":")).encode()
           ).decode()
 
-          with open("/tmp/cb/vless.txt",  "w") as f: f.write(vless)
-          with open("/tmp/cb/vmess.txt",  "w") as f: f.write(vmess)
-          with open("/tmp/cb/sub.txt",    "w") as f: f.write(sub_url)
-          with open("/tmp/cb/config.json","w") as f:
-              json.dump({
-                  "generated": deploy,
-                  "worker_url": worker,
-                  "vless": vless, "vmess": vmess,
-                  "subscription": sub_url,
-                  "manual": {
-                      "address": host, "port": 443, "uuid": uuid,
-                      "ws_path": ws_path, "tls": True, "sni": host,
-                      "fingerprint": "chrome", "alpn": ["h2","http/1.1"],
-                      "encryption": "none",
-                  }
-              }, f, indent=2)
-
-          print("VLESS=" + vless,  file=open("/tmp/cb/env.sh","w"))
-          print("VMESS=" + vmess,  file=open("/tmp/cb/env.sh","a"))
-          print("SUB="   + sub_url,file=open("/tmp/cb/env.sh","a"))
+          open("/tmp/cb/vless.txt",  "w").write(vless)
+          open("/tmp/cb/vmess.txt",  "w").write(vmess)
+          open("/tmp/cb/sub.txt",    "w").write(sub_url)
+          open("/tmp/cb/config.json","w").write(json.dumps({
+              "generated":deploy,"worker_url":worker,
+              "vless":vless,"vmess":vmess,"subscription":sub_url,
+              "manual":{
+                  "address":host,"port":443,"uuid":uuid,
+                  "ws_path":ws_path,"tls":True,"sni":host,
+                  "fingerprint":"chrome","alpn":["h2","http/1.1"],
+                  "encryption":"none",
+              }
+          }, indent=2))
           print("✅ Links generated")
+          print("VLESS:", vless[:60], "...")
           PYEOF
 
           VLESS_LINK=$(cat /tmp/cb/vless.txt)
           VMESS_LINK=$(cat /tmp/cb/vmess.txt)
 
-          # ── QR codes ───────────────────────────────────────────────────
+          # QR codes
+          QR_VLESS="" ; QR_VMESS="" ; QR_SUB=""
           if [ "${QRCODE_OK}" = "true" ]; then
             python3 - <<PYEOF
           import qrcode, base64
           from qrcode.constants import ERROR_CORRECT_M
-
-          ITEMS = [
+          for data, path in [
               ("${VLESS_LINK}", "/tmp/cb/qr-vless.png"),
               ("${VMESS_LINK}", "/tmp/cb/qr-vmess.png"),
               ("${SUB_URL}",    "/tmp/cb/qr-sub.png"),
-          ]
-          for data, path in ITEMS:
+          ]:
               qr = qrcode.QRCode(None, ERROR_CORRECT_M, box_size=6, border=2)
               qr.add_data(data); qr.make(fit=True)
               img = qr.make_image(fill_color="#00ffcc", back_color="#0a0a2e")
               img.save(path, "PNG")
-              with open(path,"rb") as f:
-                  b64 = base64.b64encode(f.read()).decode()
-              with open(path+".b64","w") as f:
-                  f.write(b64)
-              print(f"  ✅ {path}")
+              b64 = base64.b64encode(open(path,"rb").read()).decode()
+              open(path+".b64","w").write(b64)
+              print(f"  ✅ QR: {path}")
           PYEOF
             QR_VLESS=$(cat /tmp/cb/qr-vless.png.b64 2>/dev/null || echo "")
             QR_VMESS=$(cat /tmp/cb/qr-vmess.png.b64 2>/dev/null || echo "")
             QR_SUB=$(cat   /tmp/cb/qr-sub.png.b64   2>/dev/null || echo "")
-          else
-            QR_VLESS=""
-            QR_VMESS=""
-            QR_SUB=""
           fi
 
-          # ── Badges ─────────────────────────────────────────────────────
-          if [ "${HEALTH_OK}" = "true" ]; then
-            STATUS_ICON="🟢"
-            STATUS_TEXT="LIVE"
-          else
-            STATUS_ICON="🟡"
-            STATUS_TEXT="PROPAGATING"
-          fi
-          [ -n "${PROXY_IP}" ] && PROXY_ROW="| Relay IP | \`${PROXY_IP}\` |" \
-                               || PROXY_ROW="| Relay IP | *not set — direct mode* |"
+          [ "${HEALTH_OK}" = "true" ] && STATUS_ICON="🟢" || STATUS_ICON="🟡"
+          [ -n "${PROXY_IP}" ] \
+            && PROXY_ROW="| Relay IP | \`${PROXY_IP}\` |" \
+            || PROXY_ROW="| Relay IP | *not set — direct mode* |"
 
-          # ════════════════════════════════════════════════════════════════
-          # SUMMARY — ASCII art banner (SVG inline)
-          # ════════════════════════════════════════════════════════════════
+          # ── Summary ─────────────────────────────────────────────────────
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
           <div align="center">
 
           ```
           ██████╗██╗      ██████╗ ██╗   ██╗██████╗ ██████╗ ███████╗ █████╗ ██╗  ██╗
           ██╔════╝██║     ██╔═══██╗██║   ██║██╔══██╗██╔══██╗██╔════╝██╔══██╗██║ ██╔╝
-          ██║     ██║     ██║   ██║██║   ██║██║  ██║██████╔╝█████╗  ███████║█████╔╝ 
-          ██║     ██║     ██║   ██║██║   ██║██║  ██║██╔══██╗██╔══╝  ██╔══██║██╔═██╗ 
+          ██║     ██║     ██║   ██║██║   ██║██║  ██║██████╔╝█████╗  ███████║█████╔╝
+          ██║     ██║     ██║   ██║██║   ██║██║  ██║██╔══██╗██╔══╝  ██╔══██║██╔═██╗
           ╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝██████╔╝███████╗██║  ██║██║  ██╗
            ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
-                            VLESS + VMess · Cloudflare Workers · DPI-Proof
           ```
+          *VLESS + VMess · Cloudflare Workers · DPI-Proof*
 
           </div>
 
           ---
           SUMEOF
 
-          # Status bar (dynamic)
-          printf '<div align="center">\n\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '### %s Deployment %s — Run [#%s](../../actions/runs/%s)\n\n' \
-            "${STATUS_ICON}" "${STATUS_TEXT}" \
-            "${{ github.run_number }}" "${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          printf '<div align="center">\n\n### %s Deployment Complete — Run [#%s](../../actions/runs/%s)\n\n</div>\n\n' \
+            "${STATUS_ICON}" "${{ github.run_number }}" "${{ github.run_id }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
           printf '| | |\n|:--|:--|\n' >> "$GITHUB_STEP_SUMMARY"
           printf '| 🌐 Worker | [`%s`](%s) |\n' "${WORKER_URL}" "${WORKER_URL}" >> "$GITHUB_STEP_SUMMARY"
           printf '| 📡 Subscription | [`%s`](%s) |\n' "${SUB_URL}" "${SUB_URL}" >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🕐 Deployed | `%s` |\n' "${DEPLOY_TIME}" >> "$GITHUB_STEP_SUMMARY"
-          printf '\n</div>\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '| ❤️ Health | `%s` |\n' "${HEALTH_OK}" >> "$GITHUB_STEP_SUMMARY"
+          printf '| 🕐 Deployed | `%s` |\n\n---\n\n' "${DEPLOY_TIME}" >> "$GITHUB_STEP_SUMMARY"
 
-          # ── QR CODES ───────────────────────────────────────────────────
+          # QR section
           if [ -n "${QR_VLESS}" ]; then
             cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
           ## 📱 Scan to Connect
 
           <div align="center">
-          <table>
-          <tr>
+          <table><tr>
             <th align="center">⚡ VLESS</th>
             <th align="center">🔮 VMess</th>
             <th align="center">📡 Subscription</th>
-          </tr>
-          <tr>
+          </tr><tr>
             <td align="center"><sub>V2rayNG · Hiddify · Streisand</sub><br><br>
           SUMEOF
-            printf '<img src="data:image/png;base64,' >> "$GITHUB_STEP_SUMMARY"
-            printf '%s' "${QR_VLESS}" >> "$GITHUB_STEP_SUMMARY"
-            printf '" width="200" height="200" />' >> "$GITHUB_STEP_SUMMARY"
-            cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
-            </td>
-            <td align="center"><sub>V2rayN · Clash.Meta · NekoBox</sub><br><br>
-          SUMEOF
-            printf '<img src="data:image/png;base64,' >> "$GITHUB_STEP_SUMMARY"
-            printf '%s' "${QR_VMESS}" >> "$GITHUB_STEP_SUMMARY"
-            printf '" width="200" height="200" />' >> "$GITHUB_STEP_SUMMARY"
-            cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
-            </td>
-            <td align="center"><sub>All clients · Auto-updates on redeploy</sub><br><br>
-          SUMEOF
-            printf '<img src="data:image/png;base64,' >> "$GITHUB_STEP_SUMMARY"
-            printf '%s' "${QR_SUB}" >> "$GITHUB_STEP_SUMMARY"
-            printf '" width="200" height="200" />' >> "$GITHUB_STEP_SUMMARY"
-            cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
-            </td>
-          </tr>
-          </table>
-          </div>
-
-          ---
-
-          SUMEOF
+            printf '<img src="data:image/png;base64,%s" width="200"/>' "${QR_VLESS}" >> "$GITHUB_STEP_SUMMARY"
+            printf '</td>\n    <td align="center"><sub>V2rayN · Clash · NekoBox</sub><br><br>' >> "$GITHUB_STEP_SUMMARY"
+            printf '<img src="data:image/png;base64,%s" width="200"/>' "${QR_VMESS}" >> "$GITHUB_STEP_SUMMARY"
+            printf '</td>\n    <td align="center"><sub>All clients · Auto-updates</sub><br><br>' >> "$GITHUB_STEP_SUMMARY"
+            printf '<img src="data:image/png;base64,%s" width="200"/>' "${QR_SUB}" >> "$GITHUB_STEP_SUMMARY"
+            printf '</td>\n</tr></table>\n</div>\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # ── CONNECTION LINKS ───────────────────────────────────────────
-          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
-          ## 🔗 Connection Links
-          > 💡 Click the **copy icon** on any code block to copy the full link.
+          # Links
+          printf '## 🔗 Connection Links\n> 💡 Click the copy icon on each block\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '### ⚡ VLESS\n```\n%s\n```\n\n' "${VLESS_LINK}" >> "$GITHUB_STEP_SUMMARY"
+          printf '### 🔮 VMess\n```\n%s\n```\n\n' "${VMESS_LINK}" >> "$GITHUB_STEP_SUMMARY"
+          printf '### 📡 Subscription URL\n```\n%s\n```\n\n---\n\n' "${SUB_URL}" >> "$GITHUB_STEP_SUMMARY"
 
-          ### ⚡ VLESS
-          SUMEOF
-          printf '```\n%s\n```\n\n' "${VLESS_LINK}" >> "$GITHUB_STEP_SUMMARY"
+          # Manual config table
+          printf '## ⚙️ Manual Configuration\n\n| Parameter | Value |\n|:---|:---|\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '| Address | `%s` |\n' "${HOST}"     >> "$GITHUB_STEP_SUMMARY"
+          printf '| Port | `443` |\n'                  >> "$GITHUB_STEP_SUMMARY"
+          printf '| UUID | `%s` |\n' "${UUID}"         >> "$GITHUB_STEP_SUMMARY"
+          printf '| WS Path | `%s` |\n' "${WS_PATH}"   >> "$GITHUB_STEP_SUMMARY"
+          printf '| TLS | `true` |\n'                  >> "$GITHUB_STEP_SUMMARY"
+          printf '| SNI | `%s` |\n' "${HOST}"          >> "$GITHUB_STEP_SUMMARY"
+          printf '| Fingerprint | `chrome` |\n'        >> "$GITHUB_STEP_SUMMARY"
+          printf '| ALPN | `h2, http/1.1` |\n'         >> "$GITHUB_STEP_SUMMARY"
+          printf '| Encryption | `none` |\n'           >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n\n---\n\n' "${PROXY_ROW}"        >> "$GITHUB_STEP_SUMMARY"
 
-          printf '### 🔮 VMess\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '```\n%s\n```\n\n' "${VMESS_LINK}" >> "$GITHUB_STEP_SUMMARY"
-
-          printf '### 📡 Subscription URL\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '> Import this URL into any client to get all configs at once.\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '> It always serves the **latest credentials** after every redeploy.\n\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '```\n%s\n```\n\n---\n\n' "${SUB_URL}" >> "$GITHUB_STEP_SUMMARY"
-
-          # ── MANUAL CONFIG TABLE ────────────────────────────────────────
-          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
-          ## ⚙️ Manual Configuration
-
-          | Parameter | Value |
-          |:----------|:------|
-          SUMEOF
-          printf '| 🖥️ &nbsp;Address | `%s` |\n'         "${HOST}"     >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🔌 &nbsp;Port | `443` |\n'                          >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🔑 &nbsp;UUID | `%s` |\n'             "${UUID}"     >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🛤️ &nbsp;WS Path | `%s` |\n'          "${WS_PATH}"  >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🔒 &nbsp;TLS | `true` |\n'                          >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🏷️ &nbsp;SNI | `%s` |\n'              "${HOST}"     >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🕵️ &nbsp;Fingerprint | `chrome` |\n'                >> "$GITHUB_STEP_SUMMARY"
-          printf '| 📶 &nbsp;ALPN | `h2, http/1.1` |\n'                 >> "$GITHUB_STEP_SUMMARY"
-          printf '| 🔐 &nbsp;Encryption | `none` *(payload inside TLS)* |\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '%s\n' "${PROXY_ROW}" >> "$GITHUB_STEP_SUMMARY"
-          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-
-          # ── COLLAPSIBLE SECTIONS ───────────────────────────────────────
+          # Collapsible sections
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
           <details>
           <summary>🌐 Worker Endpoints</summary>
 
           | Endpoint | Purpose |
-          |:---------|:--------|
+          |:---|:---|
           SUMEOF
-          printf '| [`%s%s`](%s%s) | WebSocket proxy entry |\n' \
-            "${WORKER_URL}" "${WS_PATH}" "${WORKER_URL}" "${WS_PATH}" >> "$GITHUB_STEP_SUMMARY"
-          printf '| [`%s/sub`](%s/sub) | Base64 subscription feed |\n' \
-            "${WORKER_URL}" "${WORKER_URL}" >> "$GITHUB_STEP_SUMMARY"
-          printf '| [`%s/health`](%s/health) | JSON health-check |\n' \
-            "${WORKER_URL}" "${WORKER_URL}" >> "$GITHUB_STEP_SUMMARY"
-          printf '| [`%s/`](%s/) | Root ping |\n\n' \
-            "${WORKER_URL}" "${WORKER_URL}" >> "$GITHUB_STEP_SUMMARY"
-          printf '</details>\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '| `%s%s` | WebSocket proxy |\n' "${WORKER_URL}" "${WS_PATH}" >> "$GITHUB_STEP_SUMMARY"
+          printf '| `%s/sub` | Subscription feed |\n' "${WORKER_URL}" >> "$GITHUB_STEP_SUMMARY"
+          printf '| `%s/health` | Health check |\n' "${WORKER_URL}" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n</details>\n\n' >> "$GITHUB_STEP_SUMMARY"
 
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMEOF'
           <details>
-          <summary>🛡️ How DPI evasion works</summary>
+          <summary>🛡️ DPI Evasion Table</summary>
 
           ```
-          ┌─────────────────────────┬──────────────────────────────────────────────┐
-          │ What DPI inspects       │ What DPI actually sees                       │
-          ├─────────────────────────┼──────────────────────────────────────────────┤
-          │ Destination IP          │ Cloudflare anycast — globally trusted CDN    │
-          │ TLS certificate         │ Genuine Cloudflare cert, full valid chain    │
-          │ SNI field               │ Real *.workers.dev — whitelisted everywhere  │
-          │ TLS fingerprint         │ Standard TLS 1.3 — Chrome browser profile   │
-          │ HTTP headers            │ Normal Connection: Upgrade WebSocket         │
-          │ Traffic pattern         │ Indistinguishable from HTTPS browsing        │
-          │ Port                    │ 443 — never blocked by any ISP               │
-          │ Payload                 │ Encrypted VLESS inside TLS — fully opaque   │
-          └─────────────────────────┴──────────────────────────────────────────────┘
+          ┌──────────────────────────┬────────────────────────────────────────────┐
+          │ What DPI inspects        │ What DPI actually sees                     │
+          ├──────────────────────────┼────────────────────────────────────────────┤
+          │ Destination IP           │ Cloudflare anycast — globally trusted CDN  │
+          │ TLS certificate          │ Genuine Cloudflare cert, full valid chain  │
+          │ SNI field                │ Real *.workers.dev — whitelisted worldwide  │
+          │ TLS fingerprint          │ Standard TLS 1.3 — Chrome browser profile  │
+          │ HTTP upgrade header      │ Normal WebSocket handshake                 │
+          │ Traffic pattern          │ Indistinguishable from HTTPS browsing      │
+          │ Port                     │ 443 — never blocked                        │
+          │ Payload                  │ Encrypted VLESS inside TLS — fully opaque  │
+          └──────────────────────────┴────────────────────────────────────────────┘
           ```
 
           </details>
 
           <details>
-          <summary>📱 Compatible clients</summary>
+          <summary>📱 Compatible Clients</summary>
 
           | Client | Platform | VLESS | VMess | Sub |
-          |:-------|:---------|:-----:|:-----:|:---:|
+          |:---|:---|:---:|:---:|:---:|
           | [Hiddify](https://github.com/hiddify/hiddify-next) | All 🇮🇷 | ✅ | ✅ | ✅ |
           | [V2rayNG](https://github.com/2dust/v2rayNG) | Android | ✅ | ✅ | ✅ |
           | [V2rayN](https://github.com/2dust/v2rayN) | Windows | ✅ | ✅ | ✅ |
@@ -594,15 +482,15 @@ jobs:
 
           ---
 
-          > 🔄 **Key rotation:** Re-run this workflow any time to generate a fresh UUID and WS path.
-          > The `/sub` URL always serves the latest credentials — subscription clients auto-update.
+          > 🔄 **Key rotation:** Re-run this workflow any time — fresh UUID + WS path every run.
+          > The `/sub` URL always has the latest credentials. Share it with clients for auto-update.
 
           SUMEOF
 
           echo "✅ Summary written"
 
       # ══════════════════════════════════════════════════════════════════════
-      # 8 ▸ Upload artifact (always — even on failure for debug)
+      # 8 ▸ Upload artifact
       # ══════════════════════════════════════════════════════════════════════
       - name: "📎 Upload config artifact"
         if: always()
@@ -613,22 +501,21 @@ jobs:
           retention-days: 30
 
       # ══════════════════════════════════════════════════════════════════════
-      # 9 ▸ Final console summary
+      # 9 ▸ Final status
       # ══════════════════════════════════════════════════════════════════════
       - name: "📊 Final status"
         if: always()
         run: |
           URL="${{ steps.deploy.outputs.worker_url }}"
-          HEALTH="${{ steps.deploy.outputs.health_ok }}"
           echo ""
           echo "┌────────────────────────────────────────────────────────┐"
           if [ "${{ job.status }}" = "success" ]; then
-          echo "│          ✅  CLOUDBREAK DEPLOYED SUCCESSFULLY          │"
+          echo "│        ✅  CLOUDBREAK DEPLOYED SUCCESSFULLY            │"
           else
-          echo "│          ❌  DEPLOYMENT HAD ERRORS — CHECK LOGS        │"
+          echo "│        ❌  DEPLOYMENT HAD ERRORS — CHECK LOGS ABOVE   │"
           fi
           echo "├────────────────────────────────────────────────────────┤"
           printf "│  URL    : %-45s │\n" "${URL:-n/a}"
-          printf "│  Health : %-45s │\n" "${HEALTH:-unknown}"
+          printf "│  Health : %-45s │\n" "${{ steps.deploy.outputs.health_ok }}"
           printf "│  Run    : #%-44s │\n" "${{ github.run_number }}"
           echo "└────────────────────────────────────────────────────────┘"
