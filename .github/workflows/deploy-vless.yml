@@ -37,14 +37,12 @@ jobs:
           FAIL=0
           if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
             echo "::error title=Missing Secret::CLOUDFLARE_API_TOKEN is not set"
-            echo "  → Settings → Secrets and variables → Actions → New repository secret"
             FAIL=1
           else
             echo "✅ CLOUDFLARE_API_TOKEN present"
           fi
           if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
             echo "::error title=Missing Secret::CLOUDFLARE_ACCOUNT_ID is not set"
-            echo "  → Cloudflare Dashboard → Workers & Pages → right sidebar"
             FAIL=1
           else
             echo "✅ CLOUDFLARE_ACCOUNT_ID present"
@@ -68,7 +66,7 @@ jobs:
             echo "✅ qrcode ready"
           else
             echo "QRCODE_OK=false" >> "$GITHUB_ENV"
-            echo "::warning title=QR Skip::qrcode install failed — QR codes will be skipped"
+            echo "::warning title=QR Skip::qrcode install failed"
           fi
 
       # ══════════════════════════════════════════════════════════════════════
@@ -76,9 +74,6 @@ jobs:
       # ══════════════════════════════════════════════════════════════════════
       - name: "📄 Validate worker.js"
         run: |
-          echo "── Files in repo root ───────────────────────────────────"
-          ls -la
-          echo ""
           if [ ! -f "worker.js" ]; then
             echo "::error title=Missing File::worker.js not found in repo root"
             exit 1
@@ -131,13 +126,11 @@ jobs:
           DEPLOY_TIME="${{ steps.keygen.outputs.deploy_time }}"
           PROXY_IP="${{ github.event.inputs.proxy_ip }}"
 
-          # ── Get workers.dev subdomain from Cloudflare API ────────────────
-          echo "── Fetching workers.dev subdomain ───────────────────────"
+          # ── Get workers.dev subdomain ─────────────────────────────────────
           API_RESP=$(curl -s \
             "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Content-Type: application/json")
-          echo "API response: ${API_RESP}"
 
           CF_SUBDOMAIN=$(echo "${API_RESP}" | python3 -c \
             "import sys,json; d=json.load(sys.stdin); print(d['result']['subdomain'] if d.get('success') and d.get('result') else '')" \
@@ -146,7 +139,7 @@ jobs:
           if [ -n "${CF_SUBDOMAIN}" ]; then
             WORKER_URL="https://${WORKER_NAME}.${CF_SUBDOMAIN}.workers.dev"
             HOST="${WORKER_NAME}.${CF_SUBDOMAIN}.workers.dev"
-            echo "✅ Subdomain: ${CF_SUBDOMAIN} → ${WORKER_URL}"
+            echo "✅ Subdomain: ${CF_SUBDOMAIN}"
           else
             WORKER_URL=""
             HOST=""
@@ -154,44 +147,31 @@ jobs:
           fi
 
           # ── Write wrangler.toml ──────────────────────────────────────────
-          echo "── Writing wrangler.toml ─────────────────────────────────"
-          printf 'name = "%s"\n'                              "${WORKER_NAME}"  > wrangler.toml
+          printf 'name = "%s"\n'                             "${WORKER_NAME}"  > wrangler.toml
           printf 'main = "worker.js"\n'                                        >> wrangler.toml
           printf 'compatibility_date = "2025-01-01"\n'                         >> wrangler.toml
           printf 'workers_dev = true\n'                                        >> wrangler.toml
           printf 'compatibility_flags = ["nodejs_compat"]\n'                   >> wrangler.toml
           printf '\n[vars]\n'                                                   >> wrangler.toml
-          printf 'UUID = "%s"\n'                              "${UUID}"        >> wrangler.toml
-          printf 'WS_PATH = "%s"\n'                           "${WS_PATH}"     >> wrangler.toml
-          printf 'SUB_PATH = "%s"\n'                          "${SUB_PATH}"    >> wrangler.toml
-          printf 'DEPLOY_TIME = "%s"\n'                       "${DEPLOY_TIME}" >> wrangler.toml
-          [ -n "${PROXY_IP}" ] && printf 'PROXYIP = "%s"\n'  "${PROXY_IP}"    >> wrangler.toml
-
-          echo "── wrangler.toml ─────────────────────────────────────────"
+          printf 'UUID = "%s"\n'                             "${UUID}"         >> wrangler.toml
+          printf 'WS_PATH = "%s"\n'                          "${WS_PATH}"      >> wrangler.toml
+          printf 'SUB_PATH = "%s"\n'                         "${SUB_PATH}"     >> wrangler.toml
+          printf 'DEPLOY_TIME = "%s"\n'                      "${DEPLOY_TIME}"  >> wrangler.toml
+          [ -n "${PROXY_IP}" ] && printf 'PROXYIP = "%s"\n' "${PROXY_IP}"     >> wrangler.toml
           cat wrangler.toml
-          echo ""
-
-          # ── Pre-deploy sanity check ──────────────────────────────────────
-          echo "── Pre-deploy file check ─────────────────────────────────"
-          ls -la worker.js wrangler.toml
-          echo "worker.js: $(wc -c < worker.js) bytes"
 
           # ── Deploy with retry ────────────────────────────────────────────
           DEPLOY_EXIT=1
           for attempt in 1 2 3; do
-            echo ""
-            echo "── Deploy attempt ${attempt}/3 ──────────────────────────"
+            echo "── Deploy attempt ${attempt}/3 ──"
             set +e
             wrangler deploy worker.js 2>&1 | tee /tmp/wrangler.log
             DEPLOY_EXIT=${PIPESTATUS[0]}
             set -e
-            echo "Wrangler exit: ${DEPLOY_EXIT}"
-
             if [ "${DEPLOY_EXIT}" -eq 0 ]; then
-              echo "✅ Deploy succeeded on attempt ${attempt}"
+              echo "✅ Deploy succeeded"
               break
             fi
-
             LOG=$(cat /tmp/wrangler.log)
             if echo "${LOG}" | grep -qi "10000\|10063\|Forbidden\|401\|403\|authentication\|API token"; then
               echo "::error title=Auth Error::Invalid API token or missing permissions"
@@ -201,44 +181,34 @@ jobs:
               echo "::error title=Syntax Error::worker.js has a syntax/parse error"
               exit 1
             fi
-            [ "${attempt}" -lt 3 ] && echo "Retrying in 10s…" && sleep 10
+            [ "${attempt}" -lt 3 ] && sleep 10
           done
 
-          # ── Extract URL from wrangler output if API call missed ──────────
+          # ── Extract URL ───────────────────────────────────────────────────
           if [ -z "${WORKER_URL}" ]; then
             WORKER_URL=$(grep -oP 'https://[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.workers\.dev' \
               /tmp/wrangler.log | head -1 || echo "")
             if [ -n "${WORKER_URL}" ]; then
               HOST=$(echo "${WORKER_URL}" | sed 's|https://||')
-              echo "✅ URL from wrangler output: ${WORKER_URL}"
             elif [ "${DEPLOY_EXIT}" -eq 0 ]; then
               WORKER_URL="https://${WORKER_NAME}.workers.dev"
               HOST="${WORKER_NAME}.workers.dev"
-              echo "⚠️  Fallback URL: ${WORKER_URL}"
             else
-              echo "::error title=Deploy Failed::wrangler exit ${DEPLOY_EXIT}, URL unknown"
-              cat /tmp/wrangler.log
-              exit 1
+              echo "::error title=Deploy Failed::wrangler exit ${DEPLOY_EXIT}"
+              cat /tmp/wrangler.log; exit 1
             fi
           fi
 
-          echo ""
-          echo "── Full wrangler output ──────────────────────────────────"
-          cat /tmp/wrangler.log
-
           # ── Health check ─────────────────────────────────────────────────
-          echo ""
-          echo "── Health check (up to 90s) ──────────────────────────────"
           HEALTH_OK=false
           for i in $(seq 1 18); do
             HTTP=$(curl -s -o /tmp/health.json -w "%{http_code}" \
               --max-time 8 --connect-timeout 5 \
               "${WORKER_URL}/health" 2>/dev/null || echo "000")
-            echo "  [${i}/18] ${WORKER_URL}/health → HTTP ${HTTP}"
+            echo "  [${i}/18] /health → HTTP ${HTTP}"
             if [ "${HTTP}" = "200" ]; then
               HEALTH_OK=true
               echo "✅ Worker is live!"
-              cat /tmp/health.json
               break
             fi
             sleep 5
@@ -256,238 +226,146 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # ══════════════════════════════════════════════════════════════════════
-      # 7 ▸ Generate links, QR codes, and summary
+      # 7 ▸ Generate QR codes + summary
       # ══════════════════════════════════════════════════════════════════════
-      - name: "📋 Generate configs, QR codes, and summary"
+      - name: "📋 Generate QR codes and summary"
+        env:
+          UUID:        ${{ steps.keygen.outputs.uuid }}
+          WS_PATH:     ${{ steps.keygen.outputs.ws_path }}
+          SUB_PATH:    ${{ steps.keygen.outputs.sub_path }}
+          DEPLOY_TIME: ${{ steps.keygen.outputs.deploy_time }}
+          WORKER_URL:  ${{ steps.deploy.outputs.worker_url }}
+          HOST:        ${{ steps.deploy.outputs.host }}
+          HEALTH_OK:   ${{ steps.deploy.outputs.health_ok }}
+          PROXY_IP:    ${{ github.event.inputs.proxy_ip }}
         run: |
           set -euo pipefail
-
-          UUID="${{ steps.keygen.outputs.uuid }}"
-          WS_PATH="${{ steps.keygen.outputs.ws_path }}"
-          SUB_PATH="${{ steps.keygen.outputs.sub_path }}"
-          DEPLOY_TIME="${{ steps.keygen.outputs.deploy_time }}"
-          WORKER_URL="${{ steps.deploy.outputs.worker_url }}"
-          HOST="${{ steps.deploy.outputs.host }}"
-          HEALTH_OK="${{ steps.deploy.outputs.health_ok }}"
-          PROXY_IP="${{ github.event.inputs.proxy_ip }}"
-          SUB_URL="${WORKER_URL}${SUB_PATH}"
-
           mkdir -p /tmp/cb
 
-          # ── Generate links ────────────────────────────────────────────────
-          python3 - <<PYEOF
-          import urllib.parse, json, base64
+          # ── 1. Generate links (Python via base64 — avoids heredoc conflict) ──
+          echo "aW1wb3J0IHVybGxpYi5wYXJzZSwganNvbiwgYmFzZTY0IGFzIGI2NCwgb3MKdXVpZCAgICA9IG9zLmVudmlyb25bIlVVSUQiXQpob3N0ICAgID0gb3MuZW52aXJvblsiSE9TVCJdCndzX3BhdGggPSBvcy5lbnZpcm9uWyJXU19QQVRIIl0Kc3ViX3BhdGg9IG9zLmVudmlyb25bIlNVQl9QQVRIIl0Kd29ya2VyICA9IG9zLmVudmlyb25bIldPUktFUl9VUkwiXQpzdWJfdXJsID0gd29ya2VyICsgc3ViX3BhdGgKZGVwbG95ICA9IG9zLmVudmlyb25bIkRFUExPWV9USU1FIl0KcGFyYW1zID0gdXJsbGliLnBhcnNlLnVybGVuY29kZSh7ImVuY3J5cHRpb24iOiJub25lIiwic2VjdXJpdHkiOiJ0bHMiLCJzbmkiOmhvc3QsImZwIjoiY2hyb21lIiwidHlwZSI6IndzIiwiaG9zdCI6aG9zdCwicGF0aCI6d3NfcGF0aCwiYWxwbiI6ImgyLGh0dHAvMS4xIn0pCnZsZXNzID0gZiJ2bGVzczovL3t1dWlkfUB7aG9zdH06NDQzP3twYXJhbXN9I0NGLVZMRVNTLUlSIgpjZmcgPSB7InYiOiIyIiwicHMiOiJDRi1WTWVzcy1JUiIsImFkZCI6aG9zdCwicG9ydCI6NDQzLCJpZCI6dXVpZCwiYWlkIjowLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6aG9zdCwicGF0aCI6d3NfcGF0aCwidGxzIjoidGxzIiwic25pIjpob3N0LCJhbHBuIjoiaDIsaHR0cC8xLjEiLCJmcCI6ImNocm9tZSJ9CnZtZXNzID0gInZtZXNzOi8vIiArIGI2NC5iNjRlbmNvZGUoanNvbi5kdW1wcyhjZmcsc2VwYXJhdG9ycz0oIiwiLCI6IikpLmVuY29kZSgpKS5kZWNvZGUoKQpvcGVuKCIvdG1wL2NiL3ZsZXNzLnR4dCIsInciKS53cml0ZSh2bGVzcykKb3BlbigiL3RtcC9jYi92bWVzcy50eHQiLCJ3Iikud3JpdGUodm1lc3MpCm9wZW4oIi90bXAvY2Ivc3ViX3VybC50eHQiLCJ3Iikud3JpdGUoc3ViX3VybCkKb3BlbigiL3RtcC9jYi9jb25maWcuanNvbiIsInciKS53cml0ZShqc29uLmR1bXBzKHsiZ2VuZXJhdGVkIjpkZXBsb3ksIndvcmtlcl91cmwiOndvcmtlciwidmxlc3MiOnZsZXNzLCJ2bWVzcyI6dm1lc3MsInN1YnNjcmlwdGlvbiI6c3ViX3VybCwibWFudWFsIjp7ImFkZHJlc3MiOmhvc3QsInBvcnQiOjQ0MywidXVpZCI6dXVpZCwid3NfcGF0aCI6d3NfcGF0aCwic3ViX3BhdGgiOnN1Yl9wYXRoLCJ0bHMiOlRydWUsInNuaSI6aG9zdCwiZmluZ2VycHJpbnQiOiJjaHJvbWUiLCJhbHBuIjpbImgyIiwiaHR0cC8xLjEiXSwiZW5jcnlwdGlvbiI6Im5vbmUifX0saW5kZW50PTIpKQpwcmludCgibGlua3Mgb2siKQo=" \
+            | base64 -d | python3
+          echo "✅ Links generated"
 
-          uuid     = "${UUID}"
-          host     = "${HOST}"
-          ws_path  = "${WS_PATH}"
-          sub_path = "${SUB_PATH}"
-          worker   = "${WORKER_URL}"
-          sub_url  = "${SUB_URL}"
-          deploy   = "${DEPLOY_TIME}"
-
-          params = urllib.parse.urlencode({
-              "encryption":"none","security":"tls","sni":host,
-              "fp":"chrome","type":"ws","host":host,
-              "path":ws_path,"alpn":"h2,http/1.1",
-          })
-          vless = f"vless://{uuid}@{host}:443?{params}#CF-VLESS-IR"
-
-          cfg = {
-              "v":"2","ps":"CF-VMess-IR","add":host,"port":443,"id":uuid,
-              "aid":0,"net":"ws","type":"none","host":host,"path":ws_path,
-              "tls":"tls","sni":host,"alpn":"h2,http/1.1","fp":"chrome",
-          }
-          vmess = "vmess://" + base64.b64encode(
-              json.dumps(cfg, separators=(",",":")).encode()).decode()
-
-          open("/tmp/cb/vless.txt",   "w").write(vless)
-          open("/tmp/cb/vmess.txt",   "w").write(vmess)
-          open("/tmp/cb/sub.txt",     "w").write(sub_url)
-          open("/tmp/cb/config.json", "w").write(json.dumps({
-              "generated":deploy,"worker_url":worker,
-              "vless":vless,"vmess":vmess,"subscription":sub_url,
-              "manual":{
-                  "address":host,"port":443,"uuid":uuid,
-                  "ws_path":ws_path,"sub_path":sub_path,
-                  "tls":True,"sni":host,"fingerprint":"chrome",
-                  "alpn":["h2","http/1.1"],"encryption":"none",
-              }
-          }, indent=2))
-          print("✅ Links generated")
-          PYEOF
-
-          VLESS_LINK=$(cat /tmp/cb/vless.txt)
-          VMESS_LINK=$(cat /tmp/cb/vmess.txt)
-
-          # ── QR codes ─────────────────────────────────────────────────────
-          QR_VLESS_B64="" ; QR_VMESS_B64="" ; QR_SUB_B64=""
+          # ── 2. Generate QR as inline SVG ──────────────────────────────────
           if [ "${QRCODE_OK}" = "true" ]; then
-            python3 - <<PYEOF
-          import qrcode, base64
-          from qrcode.constants import ERROR_CORRECT_M
-          items = [
-              ("${VLESS_LINK}", "/tmp/cb/qr-vless.png"),
-              ("${VMESS_LINK}", "/tmp/cb/qr-vmess.png"),
-              ("${SUB_URL}",    "/tmp/cb/qr-sub.png"),
-          ]
-          for data, path in items:
-              qr = qrcode.QRCode(None, ERROR_CORRECT_M, box_size=6, border=2)
-              qr.add_data(data); qr.make(fit=True)
-              img = qr.make_image(fill_color="#00ffcc", back_color="#0a0a2e")
-              img.save(path, "PNG")
-              b64 = base64.b64encode(open(path,"rb").read()).decode()
-              open(path + ".b64", "w").write(b64)
-              print(f"  ✅ {path}")
-          PYEOF
-            QR_VLESS_B64=$(cat /tmp/cb/qr-vless.png.b64 2>/dev/null || echo "")
-            QR_VMESS_B64=$(cat /tmp/cb/qr-vmess.png.b64 2>/dev/null || echo "")
-            QR_SUB_B64=$(cat   /tmp/cb/qr-sub.png.b64   2>/dev/null || echo "")
+            echo "aW1wb3J0IHFyY29kZSwgb3MKZnJvbSBxcmNvZGUuY29uc3RhbnRzIGltcG9ydCBFUlJPUl9DT1JSRUNUX00KaXRlbXMgPSB7InZsZXNzIjpvcGVuKCIvdG1wL2NiL3ZsZXNzLnR4dCIpLnJlYWQoKSwidm1lc3MiOm9wZW4oIi90bXAvY2Ivdm1lc3MudHh0IikucmVhZCgpLCJzdWIiOm9wZW4oIi90bXAvY2Ivc3ViX3VybC50eHQiKS5yZWFkKCl9CmZvciBuYW1lLCBkYXRhIGluIGl0ZW1zLml0ZW1zKCk6CiAgICBxciA9IHFyY29kZS5RUkNvZGUoTm9uZSwgRVJST1JfQ09SUkVDVF9NLCBib3hfc2l6ZT0xLCBib3JkZXI9MikKICAgIHFyLmFkZF9kYXRhKGRhdGEpCiAgICBxci5tYWtlKGZpdD1UcnVlKQogICAgbWF0cml4ID0gcXIuZ2V0X21hdHJpeCgpCiAgICBjZWxsID0gNwogICAgc2l6ZSA9IGxlbihtYXRyaXgpICogY2VsbAogICAgcmVjdHMgPSBbZic8cmVjdCB4PSJ7YypjZWxsfSIgeT0ie3IqY2VsbH0iIHdpZHRoPSJ7Y2VsbH0iIGhlaWdodD0ie2NlbGx9IiBmaWxsPSIjMDBmZmNjIi8+JyBmb3Igcixyb3cgaW4gZW51bWVyYXRlKG1hdHJpeCkgZm9yIGMsdmFsIGluIGVudW1lcmF0ZShyb3cpIGlmIHZhbF0KICAgIHN2ZyA9IGYnPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSJ7c2l6ZX0iIGhlaWdodD0ie3NpemV9IiB2aWV3Qm94PSIwIDAge3NpemV9IHtzaXplfSI+PHJlY3Qgd2lkdGg9IntzaXplfSIgaGVpZ2h0PSJ7c2l6ZX0iIGZpbGw9IiMwYTBhMmUiIHJ4PSI4Ii8+eyIiLmpvaW4ocmVjdHMpfTwvc3ZnPicKICAgIG9wZW4oZiIvdG1wL2NiL3FyLXtuYW1lfS5zdmciLCJ3Iikud3JpdGUoc3ZnKQogICAgcHJpbnQoZiJxci17bmFtZX0uc3ZnIG9rIikK" \
+              | base64 -d | python3
+            echo "✅ QR codes generated"
           fi
 
-          # ── Status ───────────────────────────────────────────────────────
-          [ "${HEALTH_OK}" = "true" ] && STATUS_BADGE="🟢 LIVE" || STATUS_BADGE="🟡 PROPAGATING"
-          [ -n "${PROXY_IP}" ] \
-            && PROXY_ROW="| Relay IP | \`${PROXY_IP}\` |" \
-            || PROXY_ROW="| Relay IP | *not set — direct mode* |"
+          # ── 3. Read files ──────────────────────────────────────────────────
+          VLESS_LINK=$(cat /tmp/cb/vless.txt)
+          VMESS_LINK=$(cat /tmp/cb/vmess.txt)
+          SUB_URL=$(cat /tmp/cb/sub_url.txt)
 
-          # ── Write summary ─────────────────────────────────────────────────
-          python3 - <<PYEOF
-          import os, base64
+          QR_VLESS="*(QR unavailable — pip install failed)*"
+          QR_VMESS="*(QR unavailable — pip install failed)*"
+          QR_SUB="*(QR unavailable — pip install failed)*"
+          [ -f /tmp/cb/qr-vless.svg ] && QR_VLESS=$(cat /tmp/cb/qr-vless.svg)
+          [ -f /tmp/cb/qr-vmess.svg ] && QR_VMESS=$(cat /tmp/cb/qr-vmess.svg)
+          [ -f /tmp/cb/qr-sub.svg   ] && QR_SUB=$(cat /tmp/cb/qr-sub.svg)
 
-          uuid       = "${UUID}"
-          host       = "${HOST}"
-          ws_path    = "${WS_PATH}"
-          sub_path   = "${SUB_PATH}"
-          worker_url = "${WORKER_URL}"
-          sub_url    = "${SUB_URL}"
-          deploy     = "${DEPLOY_TIME}"
-          status     = "${STATUS_BADGE}"
-          proxy_row  = "${PROXY_ROW}"
+          # ── 4. Status ──────────────────────────────────────────────────────
+          [ "${HEALTH_OK}" = "true" ] && STATUS="🟢 LIVE" || STATUS="🟡 PROPAGATING"
+          [ -n "${PROXY_IP}" ] && PROXY_INFO="\`${PROXY_IP}\`" || PROXY_INFO="*direct mode*"
 
-          vless_link = open("/tmp/cb/vless.txt").read().strip()
-          vmess_link = open("/tmp/cb/vmess.txt").read().strip()
+          # ── 5. Write summary (at column 0 — no indent!) ───────────────────
+          cat > "${GITHUB_STEP_SUMMARY}" << SUMMARY
+<p align="center">
+  <a href="#">
+    <img src="assets/banner-ascii.svg" width="100%" />
+  </a>
+</p>
 
-          qr_vless = ""
-          qr_vmess = ""
-          qr_sub   = ""
-          try:
-              qr_vless = open("/tmp/cb/qr-vless.png.b64").read().strip()
-              qr_vmess = open("/tmp/cb/qr-vmess.png.b64").read().strip()
-              qr_sub   = open("/tmp/cb/qr-sub.png.b64").read().strip()
-          except:
-              pass
+<p align="center">
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=16&pause=1000&color=00FFCC&center=true&vCenter=true&width=640&lines=VLESS+%2B+VMess+Ready;DPI-Proof+%E2%80%94+Real+TLS+%2B+Real+SNI;Cloudflare+Workers+%E2%80%94+Free+Forever" />
+</p>
 
-          def qr_img(b64, label):
-              if not b64:
-                  return f"*QR not available*"
-              return f'<img src="data:image/png;base64,{b64}" width="200" alt="{label}" />'
+---
 
-          summary = f"""
-          <div align="center">
+## ${STATUS} Deployment
 
-          <p align="center">
-            <a href="#">
-              <img src="https://capsule-render.vercel.app/api?type=waving&height=180&color=gradient&customColorList=0,2,2,5,30&text=CloudBreak&fontSize=72&fontColor=00FFCC&animation=twinkling&fontAlignY=38&desc=Deploy%20Complete&descSize=18&descAlignY=62&descColor=ffffff" width="100%" />
-            </a>
-          </p>
+| | |
+|---|---|
+| **Worker URL** | \`${WORKER_URL}\` |
+| **Deployed** | \`${DEPLOY_TIME}\` |
+| **WS Path** | \`${WS_PATH}\` |
+| **Sub Path** | \`${SUB_PATH}\` |
+| **Relay IP** | ${PROXY_INFO} |
 
-          <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=16&pause=1000&color=00FFCC&center=true&vCenter=true&width=600&lines=VLESS+%2B+VMess+Ready;DPI-Proof+%E2%80%94+Real+TLS+%2B+Real+SNI;Cloudflare+Workers+%E2%80%94+Free+Forever" alt="status" />
+---
 
-          </div>
+## 📡 Subscription URL
 
-          ---
+> Import into any compatible client — auto-updates on every redeploy
 
-          ## {status} Deployment Info
+\`\`\`
+${SUB_URL}
+\`\`\`
 
-          | Key | Value |
-          |---|---|
-          | Worker URL | `{worker_url}` |
-          | Deployed | `{deploy}` |
-          | WS Path | `{ws_path}` |
-          | Sub Path | `{sub_path}` |
-          {proxy_row}
+---
 
-          ---
+## 🔗 Configs
 
-          ## 📡 Subscription URL
+<details>
+<summary><b>📋 VLESS Link</b></summary>
 
-          > Import this into any compatible client — auto-updates on every redeploy.
+\`\`\`
+${VLESS_LINK}
+\`\`\`
+</details>
 
-          ```
-          {sub_url}
-          ```
+<details>
+<summary><b>📋 VMess Link</b></summary>
 
-          ---
+\`\`\`
+${VMESS_LINK}
+\`\`\`
+</details>
 
-          ## 🔗 Config Links
+---
 
-          <details>
-          <summary><b>VLESS Link</b> (click to expand)</summary>
+## 📱 QR Codes
 
-          ```
-          {vless_link}
-          ```
+<table>
+<tr>
+<td align="center"><b>VLESS</b></td>
+<td align="center"><b>VMess</b></td>
+<td align="center"><b>Subscription</b></td>
+</tr>
+<tr>
+<td align="center">${QR_VLESS}</td>
+<td align="center">${QR_VMESS}</td>
+<td align="center">${QR_SUB}</td>
+</tr>
+</table>
 
-          </details>
+---
 
-          <details>
-          <summary><b>VMess Link</b> (click to expand)</summary>
+## ⚙️ Manual Config
 
-          ```
-          {vmess_link}
-          ```
+| Field | Value |
+|---|---|
+| Address | \`${HOST}\` |
+| Port | \`443\` |
+| UUID | \`${UUID}\` |
+| Transport | \`WebSocket\` |
+| WS Path | \`${WS_PATH}\` |
+| TLS | \`true\` |
+| SNI | \`${HOST}\` |
+| Fingerprint | \`chrome\` |
+| ALPN | \`h2, http/1.1\` |
 
-          </details>
+---
 
-          ---
+<p align="center">
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0,2,2,5,30&height=80&section=footer&text=CloudBreak+%E2%80%94+Information+Wants+to+be+Free&fontSize=13&fontColor=00ffcc&animation=twinkling&fontAlignY=65" width="100%" />
+</p>
+SUMMARY
 
-          ## 📱 QR Codes
-
-          <div align="center">
-
-          <table>
-          <tr>
-            <td align="center"><b>VLESS</b><br/>{qr_img(qr_vless, "VLESS QR")}</td>
-            <td align="center"><b>VMess</b><br/>{qr_img(qr_vmess, "VMess QR")}</td>
-            <td align="center"><b>Subscription</b><br/>{qr_img(qr_sub, "Sub QR")}</td>
-          </tr>
-          </table>
-
-          </div>
-
-          ---
-
-          ## ⚙️ Manual Config
-
-          | Field | Value |
-          |---|---|
-          | Address | `{host}` |
-          | Port | `443` |
-          | UUID | `{uuid}` |
-          | Transport | `WebSocket` |
-          | WS Path | `{ws_path}` |
-          | TLS | `true` |
-          | SNI | `{host}` |
-          | Fingerprint | `chrome` |
-          | ALPN | `h2, http/1.1` |
-
-          ---
-
-          <p align="center">
-            <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0,2,2,5,30&height=80&section=footer&text=CloudBreak&fontSize=14&fontColor=00ffcc&animation=twinkling&fontAlignY=65" width="100%" />
-          </p>
-          """
-
-          step_summary = os.environ.get("GITHUB_STEP_SUMMARY", "/tmp/cb/summary.md")
-          with open(step_summary, "w") as f:
-              f.write(summary)
-          print("✅ Summary written")
-          PYEOF
-
-          # ── Upload config artifact ────────────────────────────────────────
+          echo "✅ Summary written"
           cp /tmp/cb/config.json ./cloudbreak-config.json
-          echo "✅ config artifact ready"
 
       # ══════════════════════════════════════════════════════════════════════
       # 8 ▸ Upload config artifact
